@@ -15,54 +15,89 @@ const client = new Client({
   ]
 });
 
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`Bot ligado com sucesso como ${client.user.tag}!`);
+
+  try {
+    // Substitui pelo ID do canal de notificações de ovos onde o bot está
+    // Podes obter o ID clicando com o botão direito no canal do Discord e escolhendo "Copiar ID"
+    const channelId = process.env.CHANNEL_ID; 
+    
+    if (channelId) {
+      const channel = await client.channels.fetch(channelId);
+      if (channel && channel.isTextBased()) {
+        console.log('A ler mensagens recentes do canal...');
+        const messages = await channel.messages.fetch({ limit: 100 }); // Lê as últimas 100 mensagens
+
+        // Definir o meio-dia de hoje (12:00)
+        const hojeMeioDia = new Date();
+        hojeMeioDia.setHours(12, 0, 0, 0);
+
+        for (const msg of messages.values()) {
+          // Apenas mensagens enviadas a partir do meio-dia de hoje e que tenham embeds
+          if (msg.createdAt >= hojeMeioDia && msg.embeds.length > 0) {
+            const embed = msg.embeds[0];
+            const description = embed.description || '';
+
+            if (description.includes('Egg:') || description.includes('Location:')) {
+              const lines = description.split('\n');
+              let eggName = 'Desconhecido';
+              let location = 'Desconhecida';
+
+              for (const line of lines) {
+                if (line.includes('Egg:')) {
+                  eggName = line.split('Egg:')[1].trim();
+                }
+                if (line.includes('Location:')) {
+                  location = line.split('Location:')[1].trim();
+                }
+              }
+
+              // Verificar se já existe na base de dados para não duplicar (opcional, mas útil)
+              // Inserir no Supabase (usamos a data exata em que a mensagem foi enviada!)
+              const { error } = await supabase
+                .from('eggs')
+                .insert([{ 
+                  egg_name: eggName, 
+                  location: location, 
+                  spawned_at: msg.createdAt.toISOString() 
+                }]);
+
+              if (!error) {
+                console.log(`Ovo histórico recuperado: ${eggName} em ${location} (${msg.createdAt.toLocaleTimeString()})`);
+              }
+            }
+          }
+        }
+        console.log('Varredura de histórico concluída!');
+      }
+    }
+  } catch (err) {
+    console.error('Erro ao ler mensagens antigas:', err);
+  }
 });
 
-// Detetar mensagens e embeds de ovos
+// Detetar novas mensagens em tempo real (como antes)
 client.on('messageCreate', async (message) => {
-  if (message.author.bot) {
-    // Verificar se a mensagem tem embeds (como as notificações do bot de ovos)
-    if (message.embeds.length > 0) {
-      const embed = message.embeds[0];
-      const description = embed.description || '';
-      
-      // Procurar por linhas que contenham o nome do ovo e a localização no embed
-      if (description.includes('Egg:') || description.includes('Location:')) {
-        try {
-          // Extrair informações básicas do texto do embed
-          const lines = description.split('\n');
-          let eggName = 'Desconhecido';
-          let location = 'Desconhecida';
+  if (message.author.bot && message.embeds.length > 0) {
+    const embed = message.embeds[0];
+    const description = embed.description || '';
+    
+    if (description.includes('Egg:') || description.includes('Location:')) {
+      const lines = description.split('\n');
+      let eggName = 'Desconhecido';
+      let location = 'Desconhecida';
 
-          for (const line of lines) {
-            if (line.includes('Egg:')) {
-              eggName = line.split('Egg:')[1].trim();
-            }
-            if (line.includes('Location:')) {
-              location = line.split('Location:')[1].trim();
-            }
-          }
-
-          // Guardar na tabela 'eggs' do Supabase
-          const { error } = await supabase
-            .from('eggs')
-            .insert([{ egg_name: eggName, location: location }]);
-
-          if (error) {
-            console.error('Erro ao guardar no Supabase:', error);
-          } else {
-            console.log(`Ovo guardado com sucesso: ${eggName} em ${location}`);
-          }
-        } catch (err) {
-          console.error('Erro ao processar o embed:', err);
-        }
+      for (const line of lines) {
+        if (line.includes('Egg:')) eggName = line.split('Egg:')[1].trim();
+        if (line.includes('Location:')) location = line.split('Location:')[1].trim();
       }
+
+      await supabase.from('eggs').insert([{ egg_name: eggName, location: location }]);
     }
     return;
   }
 
-  // Comando de teste antigo
   if (message.content === '!ping') {
     message.reply('Pong! O bot está online e a funcionar.');
   }
