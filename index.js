@@ -129,7 +129,7 @@ async function processMessage(msg) {
 }
 
 client.once('ready', async () => {
-  console.log(`Bot ligado como ${client.user.tag}! A ler histórico limpo...`);
+  console.log(`Bot ligado como ${client.user.tag}! A ler histórico antigo...`);
 
   try {
     const channelId = process.env.CHANNEL_ID; 
@@ -137,12 +137,11 @@ client.once('ready', async () => {
       const channel = await client.channels.fetch(channelId);
       if (channel && channel.isTextBased()) {
         let lastId = null;
-        let reachedTargetTime = false;
+        let fetchedCount = 0;
+        let keepFetching = true;
         
-        const now = new Date();
-        const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
-        
-        while (!reachedTargetTime) {
+        // Puxa mensagens antigas em lotes para trás até esgotar o canal ou atingir um limite seguro
+        while (keepFetching && fetchedCount < 2000) {
           const options = { limit: 100 };
           if (lastId) options.before = lastId;
 
@@ -150,22 +149,18 @@ client.once('ready', async () => {
           if (messages.size === 0) break;
 
           for (const msg of messages.values()) {
-            const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
-
             await processMessage(msg);
-
-            if (correctedDate < targetDate) {
-              reachedTargetTime = true;
-              break;
-            }
+            fetchedCount++;
           }
 
-          if (reachedTargetTime) break;
           lastId = messages.last().id;
-          if (messages.size < 100) break;
+
+          if (messages.size < 100) {
+            keepFetching = false;
+          }
         }
 
-        console.log('Varredura concluída com sucesso!');
+        console.log(`Varredura de histórico concluída! Processadas ${fetchedCount} mensagens.`);
       }
     }
   } catch (err) {
