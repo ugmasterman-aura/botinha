@@ -10,47 +10,69 @@ const client = new Client({
   ]
 });
 
-// Configuração do Supabase (utiliza as variáveis de ambiente configuradas no Railway)
+// Configuração do Supabase
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Função para processar e salvar a mensagem no Supabase
+// Função inteligente para processar, limpar e salvar a mensagem no Supabase
 async function processMessage(msg) {
   try {
-    // Verifica se a mensagem tem embeds (geralmente onde vêm os dados dos ovos)
-    if (!msg.embeds || msg.embeds.length === 0) return;
-
-    const embed = msg.embeds[0];
-    const eggName = embed.title || embed.description || 'Unknown_Egg';
-    
-    // Tenta extrair a localização se estiver presente no embed ou descrição
+    let eggName = 'Unknown_Egg';
     let location = 'Unknown';
-    if (embed.fields) {
-      const locField = embed.fields.find(f => f.name.toLowerCase().includes('location') || f.name.toLowerCase().includes('local'));
-      if (locField) location = locField.value;
-    }
-
-    // Deteta a raridade com base no texto do embed
-    const textToCheck = (embed.title + ' ' + embed.description + ' ' + (embed.fields ? JSON.stringify(embed.fields) : '')).toLowerCase();
-    
     let rarity = 'Common';
-    if (textToCheck.includes('divine') || textToCheck.includes('divino')) {
-      rarity = 'Divine';
-    } else if (textToCheck.includes('mythical') || textToCheck.includes('mítico')) {
-      rarity = 'Mythical';
-    } else if (textToCheck.includes('legendary') || textToCheck.includes('lendário')) {
-      rarity = 'Legendary';
+
+    if (msg.embeds && msg.embeds.length > 0) {
+      const embed = msg.embeds[0];
+      
+      if (embed.title) eggName = embed.title;
+      else if (embed.description) eggName = embed.description.split('\n')[0];
+
+      // Procura nos campos do embed por Egg, Location e Rarity
+      if (embed.fields && embed.fields.length > 0) {
+        for (const field of embed.fields) {
+          const fieldName = field.name.toLowerCase();
+          const fieldValue = field.value;
+
+          if (fieldName.includes('egg') || fieldName.includes('ovo')) {
+            eggName = fieldValue;
+          }
+          if (fieldName.includes('location') || fieldName.includes('local')) {
+            location = fieldValue;
+          }
+          if (fieldName.includes('rarity') || fieldName.includes('raridade')) {
+            rarity = fieldValue;
+          }
+        }
+      }
+    } else if (msg.content) {
+      eggName = msg.content;
     }
 
-    // Aplica o ajuste de fuso horário (-3h) para a data de criação
+    // Limpeza de códigos de emojis feios e espaços
+    eggName = eggName.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
+    location = location.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
+
+    // Deteção rigorosa de raridade
+    const fullText = (eggName + ' ' + location + ' ' + (msg.embeds[0] ? JSON.stringify(msg.embeds[0]) : '')).toLowerCase();
+    if (fullText.includes('divine') || fullText.includes('divino')) {
+      rarity = 'Divine';
+    } else if (fullText.includes('mythical') || fullText.includes('mítico')) {
+      rarity = 'Mythical';
+    } else if (fullText.includes('legendary') || fullText.includes('lendário')) {
+      rarity = 'Legendary';
+    } else if (fullText.includes('secret') || fullText.includes('secreto')) {
+      rarity = 'Secret';
+    }
+
+    // Aplicação do fuso horário (-3h)
     const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
 
-    // Insere os dados na tabela 'eggs' do Supabase incluindo a coluna 'rarity'
+    // Inserção na tabela 'eggs' do Supabase
     const { error } = await supabase
       .from('eggs')
       .insert([
         { 
-          egg_name: eggName.replace(/\s+/g, '_'), 
-          location: location.replace(/\s+/g, '_'), 
+          egg_name: eggName || 'Unknown', 
+          location: location || 'Unknown', 
           rarity: rarity,
           spawned_at: correctedDate.toISOString()
         }
@@ -64,7 +86,7 @@ async function processMessage(msg) {
   }
 }
 
-// Evento executado quando o bot fica online (Faz a varredura do histórico até às 12:00)
+// Evento executado ao ligar (Faz a varredura do histórico até às 12:00)
 client.once('ready', async () => {
   console.log(`Bot ligado como ${client.user.tag}!`);
 
@@ -121,5 +143,5 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// Inicia o bot com o token configurado no Railway
+// Inicia o bot
 client.login(process.env.DISCORD_TOKEN);
