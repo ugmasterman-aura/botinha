@@ -77,7 +77,7 @@ client.once('ready', async () => {
       const channel = await client.channels.fetch(channelId);
       if (channel && channel.isTextBased()) {
         console.log('A ler histórico recente do canal...');
-        const messages = await channel.messages.fetch({ limit: 50 });
+        const messages = await channel.messages.fetch({ limit: 100 });
 
         for (const msg of messages.values()) {
           await processMessage(msg);
