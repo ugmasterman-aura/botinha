@@ -13,57 +13,44 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 async function processMessage(msg) {
   try {
-    // Junta todo o texto possível da mensagem (conteúdo, descrição do embed e campos)
-    let fullText = msg.content || '';
-    if (msg.embeds && msg.embeds.length > 0) {
-      const embed = msg.embeds[0];
-      if (embed.title) fullText += '\n' + embed.title;
-      if (embed.description) fullText += '\n' + embed.description;
-      if (embed.fields) {
-        embed.fields.forEach(f => {
-          fullText += '\n' + f.name + ': ' + f.value;
-        });
-      }
-    }
+    if (!msg.embeds || msg.embeds.length === 0) return;
 
-    // Se a mensagem não tiver menção a "Egg", ignoramos para não sujar a base de dados
-    if (!fullText.toLowerCase().includes('egg')) return;
-
-    let eggName = 'Unknown';
+    const embed = msg.embeds[0];
+    
+    // Pega o título ou descrição tal como tinhas antes (que funcionava bem)
+    let eggName = embed.title || embed.description || 'Unknown_Egg';
+    
     let location = 'Unknown';
+    if (embed.fields) {
+      const locField = embed.fields.find(f => f.name.toLowerCase().includes('location') || f.name.toLowerCase().includes('local'));
+      if (locField) location = locField.value;
+    }
+
+    // Deteta a raridade com base em todo o conteúdo do embed
+    const textToCheck = (embed.title + ' ' + embed.description + ' ' + (embed.fields ? JSON.stringify(embed.fields) : '')).toLowerCase();
+    
     let rarity = 'Common';
-
-    // Extrai o nome do ovo de forma limpa usando Regex (procura por "Egg:" ignorando asteriscos e formatações)
-    const eggMatch = fullText.match(/egg\s*[:*_-]*\s*([a-zA-Z0-9_ ]+)/i);
-    if (eggMatch && eggMatch[1]) {
-      // Limpa espaços extras e formatações
-      eggName = eggMatch[1].replace(/[*_`]/g, '').trim().split('\n')[0];
+    if (textToCheck.includes('divine') || textToCheck.includes('divino')) {
+      rarity = 'Divine';
+    } else if (textToCheck.includes('secret') || textToCheck.includes('secreto')) {
+      rarity = 'Secret';
+    } else if (textToCheck.includes('mythical') || textToCheck.includes('mítico')) {
+      rarity = 'Mythical';
+    } else if (textToCheck.includes('legendary') || textToCheck.includes('lendário')) {
+      rarity = 'Legendary';
     }
 
-    // Extrai a localização usando Regex
-    const locMatch = fullText.match(/location\s*[:*_-]*\s*([a-zA-Z0-9_ ]+)/i);
-    if (locMatch && locMatch[1]) {
-      location = locMatch[1].replace(/[*_`]/g, '').trim().split('\n')[0];
-    }
+    // Limpa apenas os emojis do Discord (ex: <:Yeti:15470911...> vira só o texto ou limpa o lixo)
+    eggName = eggName.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
+    location = location.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
 
-    // Deteção de Raridade
-    const lower = fullText.toLowerCase();
-    if (lower.includes('divine') || lower.includes('divino')) rarity = 'Divine';
-    else if (lower.includes('secret') || lower.includes('secreto')) rarity = 'Secret';
-    else if (lower.includes('mythical') || lower.includes('mítico')) rarity = 'Mythical';
-    else if (lower.includes('legendary') || lower.includes('lendário')) rarity = 'Legendary';
+    // Se o nome ficou vazio após a limpeza, ignoramos
+    if (!eggName || eggName === '_') return;
 
-    // Substitui espaços por underscores para manter o padrão na BD
-    eggName = eggName.replace(/\s+/g, '_');
-    location = location.replace(/\s+/g, '_');
-
-    // Se por algum motivo o nome ficou vazio ou estranho, ignoramos
-    if (!eggName || eggName === 'Unknown' || eggName.length < 2) return;
-
-    // Aplica o fuso horário (-3h)
+    // Aplica a correção de fuso horário (-3h)
     const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
 
-    // Insere no Supabase
+    // Insere no Supabase com a coluna rarity incluída
     const { error } = await supabase
       .from('eggs')
       .insert([
@@ -84,7 +71,7 @@ async function processMessage(msg) {
 }
 
 client.once('ready', async () => {
-  console.log(`Bot ligado como ${client.user.tag}! A iniciar varredura completa...`);
+  console.log(`Bot ligado como ${client.user.tag}! A ler histórico...`);
 
   try {
     const channelId = process.env.CHANNEL_ID; 
@@ -120,7 +107,7 @@ client.once('ready', async () => {
           if (messages.size < 100) break;
         }
 
-        console.log('Varredura completa de histórico terminada com sucesso!');
+        console.log('Varredura concluída com sucesso!');
       }
     }
   } catch (err) {
