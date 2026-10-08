@@ -18,7 +18,6 @@ async function processMessage(msg) {
     let embedDesc = '';
     let fields = [];
 
-    // Se tiver embeds, recolhemos os dados estruturados
     if (msg.embeds && msg.embeds.length > 0) {
       const embed = msg.embeds[0];
       embedTitle = embed.title || '';
@@ -30,8 +29,14 @@ async function processMessage(msg) {
       fullText = msg.content.toLowerCase();
     }
 
-    // 1. FILTRO: Ignorar mensagens do Lab Tracker ou que não sejam de Ovos
-    if (fullText.includes('lab tracker') || fullText.includes('is active!') || !fullText.includes('egg')) {
+    // 1. FILTROS RIGOROSOS: Ignora Lab Tracker, alertas de atividade e os banners genéricos "_Spawned!!"
+    if (
+      fullText.includes('lab tracker') || 
+      fullText.includes('is active') || 
+      fullText.includes('_spawned') || 
+      fullText.includes('spawned!!') || 
+      !fullText.includes('egg')
+    ) {
       return; 
     }
 
@@ -39,7 +44,7 @@ async function processMessage(msg) {
     let location = 'Unknown';
     let rarity = 'Common';
 
-    // 2. EXTRAÇÃO: Tenta ir buscar nos "fields" do embed (onde o bot do SenZ guarda os dados)
+    // 2. EXTRAÇÃO DOS CAMPOS DO EMBED
     if (fields.length > 0) {
       for (const field of fields) {
         const fName = field.name.toLowerCase();
@@ -53,7 +58,7 @@ async function processMessage(msg) {
       }
     }
 
-    // Se não encontrou nos fields, tenta extrair da descrição através de linhas
+    // Se não encontrou nos fields, procura na descrição
     if (!eggName && embedDesc) {
       const lines = embedDesc.split('\n');
       for (const line of lines) {
@@ -65,33 +70,32 @@ async function processMessage(msg) {
       }
     }
 
-    // Se ainda assim estiver vazio, usa o título do embed como último recurso
     if (!eggName && embedTitle) {
       eggName = embedTitle;
     }
 
     if (!eggName) return;
 
-    // 3. DETEÇÃO DE RARIDADE RIGOROSA
+    // 3. DETEÇÃO DE RARIDADE ROBUSTA
     if (fullText.includes('divine') || fullText.includes('divino')) {
       rarity = 'Divine';
-    } else if (fullText.includes('secret') || fullText.includes('secreto')) {
-      rarity = 'Secret';
-    } else if (fullText.includes('eternal') || fullText.includes('eterno')) {
+    } else if (fullText.includes('eternal') || fullText.includes('eterno') || eggName.toLowerCase().includes('eternal')) {
       rarity = 'Eternal';
+    } else if (fullText.includes('secret') || fullText.includes('secreto') || eggName.toLowerCase().includes('secret')) {
+      rarity = 'Secret';
     } else if (fullText.includes('mythical') || fullText.includes('mítico')) {
       rarity = 'Mythical';
     } else if (fullText.includes('legendary') || fullText.includes('lendário')) {
       rarity = 'Legendary';
     }
 
-    // 4. LIMPEZA PROFUNDA (Remove emojis do Discord, Markdown, asteriscos e formata espaços)
+    // 4. LIMPEZA PROFUNDA DE EMOJIS E MARKDOWN
     const cleanText = (text) => {
       return text
-        .replace(/<a?:\w+:\d+>/g, '')      // Remove emojis customizados
+        .replace(/<a?:\w+:\d+>/g, '')      // Remove emojis do Discord
         .replace(/[*_`~<>]/g, '')          // Remove formatações Markdown
-        .replace(/egg:?/gi, '')            // Remove a palavra egg se sobrar
-        .replace(/location:?/gi, '')       // Remove a palavra location se sobrar
+        .replace(/egg:?/gi, '')            // Remove palavra egg se sobrar
+        .replace(/location:?/gi, '')       // Remove palavra location se sobrar
         .trim()
         .replace(/\s+/g, '_');             // Substitui espaços por underscores
     };
@@ -99,12 +103,12 @@ async function processMessage(msg) {
     eggName = cleanText(eggName);
     location = cleanText(location);
 
-    if (!eggName || eggName === '_' || eggName.toLowerCase().includes('spawned')) return;
+    if (!eggName || eggName === '_') return;
 
     // Fuso horário (-3h)
     const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
 
-    // Insere no Supabase
+    // Insere no Supabase apenas dados limpos e válidos
     const { error } = await supabase
       .from('eggs')
       .insert([
@@ -125,7 +129,7 @@ async function processMessage(msg) {
 }
 
 client.once('ready', async () => {
-  console.log(`Bot ligado como ${client.user.tag}! A ler histórico...`);
+  console.log(`Bot ligado como ${client.user.tag}! A ler histórico limpo...`);
 
   try {
     const channelId = process.env.CHANNEL_ID; 
@@ -161,7 +165,7 @@ client.once('ready', async () => {
           if (messages.size < 100) break;
         }
 
-        console.log('Varredura de histórico concluída com sucesso!');
+        console.log('Varredura concluída com sucesso!');
       }
     }
   } catch (err) {
