@@ -17,7 +17,6 @@ async function processMessage(msg) {
     let embedDesc = '';
     let fields = [];
 
-    // Garante que só processamos mensagens que tenham embeds (o formato padrão do bot de ovos)
     if (!msg.embeds || msg.embeds.length === 0) return;
 
     const embed = msg.embeds[0];
@@ -27,13 +26,14 @@ async function processMessage(msg) {
 
     const fullText = (embedTitle + ' ' + embedDesc + ' ' + JSON.stringify(fields)).toLowerCase();
 
-    // Filtros de ruído: ignora lab, laboratório, eventos de atividade e alertas genéricos do sistema
+    // Filtros rigorosos para ignorar lixo, laboratório e alertas de sistema
     if (
       fullText.includes('lab') || 
       fullText.includes('experimental') || 
       fullText.includes('is active') || 
       fullText.includes('alert') || 
       fullText.includes('spawned!!') ||
+      fullText.includes('steal_an_alerts') ||
       !fullText.includes('egg')
     ) {
       return; 
@@ -43,7 +43,7 @@ async function processMessage(msg) {
     let location = 'Unknown';
     let rarity = 'Common';
 
-    // Procura o nome do ovo e a localização diretamente nos campos estruturados (fields)
+    // Extrai o nome do ovo e local dos fields do embed
     if (fields.length > 0) {
       for (const field of fields) {
         const fName = field.name.toLowerCase();
@@ -57,7 +57,7 @@ async function processMessage(msg) {
       }
     }
 
-    // Se não veio nos fields, tenta extrair da descrição
+    // Se não encontrou nos fields, tenta na descrição
     if (!eggName && embedDesc) {
       const lines = embedDesc.split('\n');
       for (const line of lines) {
@@ -75,7 +75,7 @@ async function processMessage(msg) {
 
     if (!eggName) return;
 
-    // Determina a raridade exata com base no texto do embed
+    // Deteção exata de raridade
     if (fullText.includes('divine') || fullText.includes('divino')) {
       rarity = 'Divine';
     } else if (fullText.includes('eternal') || fullText.includes('eterno') || eggName.toLowerCase().includes('eternal')) {
@@ -88,13 +88,13 @@ async function processMessage(msg) {
       rarity = 'Legendary';
     }
 
-    // Limpeza de emojis e formatações indesejadas para o nome e local ficarem limpos (ex: Gargoyle, Demons)
+    // Limpeza para ficar igual ao Discord (ex: Gargoyle, Demons)
     const cleanText = (text) => {
       return text
-        .replace(/<a?:\w+:\d+>/g, '')      // Remove emojis do Discord
-        .replace(/[*_`~<>]/g, '')          // Remove formatações Markdown
-        .replace(/egg:?/gi, '')            // Remove palavra egg se sobrar
-        .replace(/location:?/gi, '')       // Remove palavra location se sobrar
+        .replace(/<a?:\w+:\d+>/g, '')
+        .replace(/[*_`~<>]/g, '')
+        .replace(/egg:?/gi, '')
+        .replace(/location:?/gi, '')
         .trim();
     };
 
@@ -103,10 +103,9 @@ async function processMessage(msg) {
 
     if (!eggName || eggName.length < 2) return;
 
-    // Fuso horário (-3h) aplicado exatamente ao horário do Discord
+    // Fuso horário (-3h)
     const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
 
-    // Insere os dados limpos no Supabase
     const { error } = await supabase
       .from('eggs')
       .insert([
@@ -127,7 +126,7 @@ async function processMessage(msg) {
 }
 
 client.once('ready', async () => {
-  console.log(`Bot ligado como ${client.user.tag}! A carregar o histórico completo...`);
+  console.log(`Bot ligado como ${client.user.tag}! A carregar histórico...`);
 
   try {
     const channelId = process.env.CHANNEL_ID; 
@@ -138,7 +137,6 @@ client.once('ready', async () => {
         let fetchedCount = 0;
         let keepFetching = true;
         
-        // Puxa o histórico em massa para trás para preencher a tabela com os ovos anteriores
         while (keepFetching && fetchedCount < 2000) {
           const options = { limit: 100 };
           if (lastId) options.before = lastId;
@@ -158,7 +156,7 @@ client.once('ready', async () => {
           }
         }
 
-        console.log(`Histórico carregado! Total de mensagens processadas: ${fetchedCount}`);
+        console.log(`Histórico carregado! Total processado: ${fetchedCount}`);
       }
     }
   } catch (err) {
