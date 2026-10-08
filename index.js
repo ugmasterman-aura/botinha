@@ -13,72 +13,52 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 async function processMessage(msg) {
   try {
-    let eggName = '';
-    let location = '';
-    let rarity = 'Common';
-
-    // O bot do SenZ V2 usa embeds com fields
+    // Junta todo o texto possível da mensagem (conteúdo, descrição do embed e campos)
+    let fullText = msg.content || '';
     if (msg.embeds && msg.embeds.length > 0) {
       const embed = msg.embeds[0];
-      
-      // Analisa o título/descrição para detetar raridade geral
-      const metaText = ((embed.title || '') + ' ' + (embed.description || '')).toLowerCase();
-      if (metaText.includes('divine') || metaText.includes('divino')) rarity = 'Divine';
-      else if (metaText.includes('secret') || metaText.includes('secreto')) rarity = 'Secret';
-      else if (metaText.includes('mythical') || metaText.includes('mítico')) rarity = 'Mythical';
-      else if (metaText.includes('legendary') || metaText.includes('lendário')) rarity = 'Legendary';
-
-      // Percorre os campos (fields) do embed onde vêm o Egg e a Location
-      if (embed.fields && embed.fields.length > 0) {
-        for (const field of embed.fields) {
-          const fName = field.name.toLowerCase();
-          const fVal = field.value || '';
-
-          if (fName.includes('egg') || fVal.toLowerCase().includes('egg')) {
-            eggName = fVal;
-          }
-          if (fName.includes('location') || fName.includes('local') || fVal.toLowerCase().includes('location')) {
-            location = fVal;
-          }
-        }
-      }
-
-      // Se não achou nos fields, tenta procurar nas linhas da descrição
-      if (!eggName && embed.description) {
-        const lines = embed.description.split('\n');
-        for (const line of lines) {
-          if (line.toLowerCase().includes('egg')) {
-            eggName = line.replace(/egg:?/i, '');
-          }
-          if (line.toLowerCase().includes('location')) {
-            location = line.replace(/location:?/i, '');
-          }
-        }
+      if (embed.title) fullText += '\n' + embed.title;
+      if (embed.description) fullText += '\n' + embed.description;
+      if (embed.fields) {
+        embed.fields.forEach(f => {
+          fullText += '\n' + f.name + ': ' + f.value;
+        });
       }
     }
 
-    // Se mesmo assim estiver vazio, tenta o conteúdo normal da mensagem
-    if (!eggName && msg.content) {
-      eggName = msg.content;
+    // Se a mensagem não tiver menção a "Egg", ignoramos para não sujar a base de dados
+    if (!fullText.toLowerCase().includes('egg')) return;
+
+    let eggName = 'Unknown';
+    let location = 'Unknown';
+    let rarity = 'Common';
+
+    // Extrai o nome do ovo de forma limpa usando Regex (procura por "Egg:" ignorando asteriscos e formatações)
+    const eggMatch = fullText.match(/egg\s*[:*_-]*\s*([a-zA-Z0-9_ ]+)/i);
+    if (eggMatch && eggMatch[1]) {
+      // Limpa espaços extras e formatações
+      eggName = eggMatch[1].replace(/[*_`]/g, '').trim().split('\n')[0];
     }
 
-    if (!eggName) return; // Ignora se não encontrar nenhum ovo válido
+    // Extrai a localização usando Regex
+    const locMatch = fullText.match(/location\s*[:*_-]*\s*([a-zA-Z0-9_ ]+)/i);
+    if (locMatch && locMatch[1]) {
+      location = locMatch[1].replace(/[*_`]/g, '').trim().split('\n')[0];
+    }
 
-    // Limpeza profunda de asteriscos, emojis do Discord, tags HTML e espaços
-    const cleanText = (text) => {
-      return text
-        .replace(/<a?:\w+:\d+>/g, '')      // Remove emojis customizados do Discord
-        .replace(/[*_`~]/g, '')            // Remove formatações Markdown (*, _, `, ~)
-        .replace(/egg:?/gi, '')            // Remove a palavra "Egg" se sobrou
-        .replace(/location:?/gi, '')       // Remove a palavra "Location" se sobrou
-        .trim()
-        .replace(/\s+/g, '_');             // Substitui espaços por underscores
-    };
+    // Deteção de Raridade
+    const lower = fullText.toLowerCase();
+    if (lower.includes('divine') || lower.includes('divino')) rarity = 'Divine';
+    else if (lower.includes('secret') || lower.includes('secreto')) rarity = 'Secret';
+    else if (lower.includes('mythical') || lower.includes('mítico')) rarity = 'Mythical';
+    else if (lower.includes('legendary') || lower.includes('lendário')) rarity = 'Legendary';
 
-    eggName = cleanText(eggName);
-    location = location ? cleanText(location) : 'Unknown';
+    // Substitui espaços por underscores para manter o padrão na BD
+    eggName = eggName.replace(/\s+/g, '_');
+    location = location.replace(/\s+/g, '_');
 
-    if (!eggName || eggName === '_') return;
+    // Se por algum motivo o nome ficou vazio ou estranho, ignoramos
+    if (!eggName || eggName === 'Unknown' || eggName.length < 2) return;
 
     // Aplica o fuso horário (-3h)
     const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
@@ -104,15 +84,13 @@ async function processMessage(msg) {
 }
 
 client.once('ready', async () => {
-  console.log(`Bot ligado como ${client.user.tag}!`);
+  console.log(`Bot ligado como ${client.user.tag}! A iniciar varredura completa...`);
 
   try {
     const channelId = process.env.CHANNEL_ID; 
     if (channelId) {
       const channel = await client.channels.fetch(channelId);
       if (channel && channel.isTextBased()) {
-        console.log('A ler histórico completo desde as 12:00...');
-        
         let lastId = null;
         let reachedTargetTime = false;
         
@@ -138,13 +116,11 @@ client.once('ready', async () => {
           }
 
           if (reachedTargetTime) break;
-
           lastId = messages.last().id;
-
           if (messages.size < 100) break;
         }
 
-        console.log('Varredura de histórico até às 12:00 concluída com sucesso!');
+        console.log('Varredura completa de histórico terminada com sucesso!');
       }
     }
   } catch (err) {
