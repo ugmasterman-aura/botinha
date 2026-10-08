@@ -13,50 +13,104 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 async function processMessage(msg) {
   try {
-    if (!msg.embeds || msg.embeds.length === 0) return;
+    let fullText = '';
+    let embedTitle = '';
+    let embedDesc = '';
+    let fields = [];
 
-    const embed = msg.embeds[0];
-    
-    // Pega o título ou descrição tal como tinhas antes (que funcionava bem)
-    let eggName = embed.title || embed.description || 'Unknown_Egg';
-    
-    let location = 'Unknown';
-    if (embed.fields) {
-      const locField = embed.fields.find(f => f.name.toLowerCase().includes('location') || f.name.toLowerCase().includes('local'));
-      if (locField) location = locField.value;
+    // Se tiver embeds, recolhemos os dados estruturados
+    if (msg.embeds && msg.embeds.length > 0) {
+      const embed = msg.embeds[0];
+      embedTitle = embed.title || '';
+      embedDesc = embed.description || '';
+      if (embed.fields) fields = embed.fields;
+      
+      fullText = (embedTitle + ' ' + embedDesc + ' ' + JSON.stringify(fields)).toLowerCase();
+    } else if (msg.content) {
+      fullText = msg.content.toLowerCase();
     }
 
-    // Deteta a raridade com base em todo o conteúdo do embed
-    const textToCheck = (embed.title + ' ' + embed.description + ' ' + (embed.fields ? JSON.stringify(embed.fields) : '')).toLowerCase();
-    
+    // 1. FILTRO: Ignorar mensagens do Lab Tracker ou que não sejam de Ovos
+    if (fullText.includes('lab tracker') || fullText.includes('is active!') || !fullText.includes('egg')) {
+      return; 
+    }
+
+    let eggName = '';
+    let location = 'Unknown';
     let rarity = 'Common';
-    if (textToCheck.includes('divine') || textToCheck.includes('divino')) {
+
+    // 2. EXTRAÇÃO: Tenta ir buscar nos "fields" do embed (onde o bot do SenZ guarda os dados)
+    if (fields.length > 0) {
+      for (const field of fields) {
+        const fName = field.name.toLowerCase();
+        const fVal = field.value || '';
+
+        if (fName.includes('egg') || fName.includes('ovo')) {
+          eggName = fVal;
+        } else if (fName.includes('location') || fName.includes('local')) {
+          location = fVal;
+        }
+      }
+    }
+
+    // Se não encontrou nos fields, tenta extrair da descrição através de linhas
+    if (!eggName && embedDesc) {
+      const lines = embedDesc.split('\n');
+      for (const line of lines) {
+        if (line.toLowerCase().includes('egg:')) {
+          eggName = line.replace(/.*egg:\s*/i, '');
+        } else if (line.toLowerCase().includes('location:')) {
+          location = line.replace(/.*location:\s*/i, '');
+        }
+      }
+    }
+
+    // Se ainda assim estiver vazio, usa o título do embed como último recurso
+    if (!eggName && embedTitle) {
+      eggName = embedTitle;
+    }
+
+    if (!eggName) return;
+
+    // 3. DETEÇÃO DE RARIDADE RIGOROSA
+    if (fullText.includes('divine') || fullText.includes('divino')) {
       rarity = 'Divine';
-    } else if (textToCheck.includes('secret') || textToCheck.includes('secreto')) {
+    } else if (fullText.includes('secret') || fullText.includes('secreto')) {
       rarity = 'Secret';
-    } else if (textToCheck.includes('mythical') || textToCheck.includes('mítico')) {
+    } else if (fullText.includes('eternal') || fullText.includes('eterno')) {
+      rarity = 'Eternal';
+    } else if (fullText.includes('mythical') || fullText.includes('mítico')) {
       rarity = 'Mythical';
-    } else if (textToCheck.includes('legendary') || textToCheck.includes('lendário')) {
+    } else if (fullText.includes('legendary') || fullText.includes('lendário')) {
       rarity = 'Legendary';
     }
 
-    // Limpa apenas os emojis do Discord (ex: <:Yeti:15470911...> vira só o texto ou limpa o lixo)
-    eggName = eggName.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
-    location = location.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
+    // 4. LIMPEZA PROFUNDA (Remove emojis do Discord, Markdown, asteriscos e formata espaços)
+    const cleanText = (text) => {
+      return text
+        .replace(/<a?:\w+:\d+>/g, '')      // Remove emojis customizados
+        .replace(/[*_`~<>]/g, '')          // Remove formatações Markdown
+        .replace(/egg:?/gi, '')            // Remove a palavra egg se sobrar
+        .replace(/location:?/gi, '')       // Remove a palavra location se sobrar
+        .trim()
+        .replace(/\s+/g, '_');             // Substitui espaços por underscores
+    };
 
-    // Se o nome ficou vazio após a limpeza, ignoramos
-    if (!eggName || eggName === '_') return;
+    eggName = cleanText(eggName);
+    location = cleanText(location);
 
-    // Aplica a correção de fuso horário (-3h)
+    if (!eggName || eggName === '_' || eggName.toLowerCase().includes('spawned')) return;
+
+    // Fuso horário (-3h)
     const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
 
-    // Insere no Supabase com a coluna rarity incluída
+    // Insere no Supabase
     const { error } = await supabase
       .from('eggs')
       .insert([
         { 
           egg_name: eggName, 
-          location: location, 
+          location: location || 'Unknown', 
           rarity: rarity,
           spawned_at: correctedDate.toISOString()
         }
@@ -107,7 +161,7 @@ client.once('ready', async () => {
           if (messages.size < 100) break;
         }
 
-        console.log('Varredura concluída com sucesso!');
+        console.log('Varredura de histórico concluída com sucesso!');
       }
     }
   } catch (err) {
