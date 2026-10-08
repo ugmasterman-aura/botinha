@@ -13,53 +13,72 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 async function processMessage(msg) {
   try {
-    let eggName = 'Unknown_Egg';
-    let location = 'Unknown';
+    let eggName = '';
+    let location = '';
     let rarity = 'Common';
 
-    // Junta o conteúdo da mensagem e todos os textos dos embeds para analisar de forma global
-    let fullText = msg.content || '';
+    // O bot do SenZ V2 usa embeds com fields
     if (msg.embeds && msg.embeds.length > 0) {
       const embed = msg.embeds[0];
-      if (embed.title) fullText += '\n' + embed.title;
-      if (embed.description) fullText += '\n' + embed.description;
-      if (embed.fields) {
-        embed.fields.forEach(f => {
-          fullText += '\n' + f.name + ': ' + f.value;
-        });
+      
+      // Analisa o título/descrição para detetar raridade geral
+      const metaText = ((embed.title || '') + ' ' + (embed.description || '')).toLowerCase();
+      if (metaText.includes('divine') || metaText.includes('divino')) rarity = 'Divine';
+      else if (metaText.includes('secret') || metaText.includes('secreto')) rarity = 'Secret';
+      else if (metaText.includes('mythical') || metaText.includes('mítico')) rarity = 'Mythical';
+      else if (metaText.includes('legendary') || metaText.includes('lendário')) rarity = 'Legendary';
+
+      // Percorre os campos (fields) do embed onde vêm o Egg e a Location
+      if (embed.fields && embed.fields.length > 0) {
+        for (const field of embed.fields) {
+          const fName = field.name.toLowerCase();
+          const fVal = field.value || '';
+
+          if (fName.includes('egg') || fVal.toLowerCase().includes('egg')) {
+            eggName = fVal;
+          }
+          if (fName.includes('location') || fName.includes('local') || fVal.toLowerCase().includes('location')) {
+            location = fVal;
+          }
+        }
+      }
+
+      // Se não achou nos fields, tenta procurar nas linhas da descrição
+      if (!eggName && embed.description) {
+        const lines = embed.description.split('\n');
+        for (const line of lines) {
+          if (line.toLowerCase().includes('egg')) {
+            eggName = line.replace(/egg:?/i, '');
+          }
+          if (line.toLowerCase().includes('location')) {
+            location = line.replace(/location:?/i, '');
+          }
+        }
       }
     }
 
-    // Extrai o Egg com base no padrão "Egg: [Nome]"
-    const eggMatch = fullText.match(/Egg:\s*([^\n]+)/i);
-    if (eggMatch && eggMatch[1]) {
-      eggName = eggMatch[1].trim();
+    // Se mesmo assim estiver vazio, tenta o conteúdo normal da mensagem
+    if (!eggName && msg.content) {
+      eggName = msg.content;
     }
 
-    // Extrai a Location com base no padrão "Location: [Local]"
-    const locMatch = fullText.match(/Location:\s*([^\n]+)/i);
-    if (locMatch && locMatch[1]) {
-      location = locMatch[1].trim();
-    }
+    if (!eggName) return; // Ignora se não encontrar nenhum ovo válido
 
-    // Define a raridade com base no título ou conteúdo geral (ex: Secret Egg, Divine, etc.)
-    const lowerText = fullText.toLowerCase();
-    if (lowerText.includes('divine') || lowerText.includes('divino')) {
-      rarity = 'Divine';
-    } else if (lowerText.includes('secret') || lowerText.includes('secreto')) {
-      rarity = 'Secret';
-    } else if (lowerText.includes('mythical') || lowerText.includes('mítico')) {
-      rarity = 'Mythical';
-    } else if (lowerText.includes('legendary') || lowerText.includes('lendário')) {
-      rarity = 'Legendary';
-    }
+    // Limpeza profunda de asteriscos, emojis do Discord, tags HTML e espaços
+    const cleanText = (text) => {
+      return text
+        .replace(/<a?:\w+:\d+>/g, '')      // Remove emojis customizados do Discord
+        .replace(/[*_`~]/g, '')            // Remove formatações Markdown (*, _, `, ~)
+        .replace(/egg:?/gi, '')            // Remove a palavra "Egg" se sobrou
+        .replace(/location:?/gi, '')       // Remove a palavra "Location" se sobrou
+        .trim()
+        .replace(/\s+/g, '_');             // Substitui espaços por underscores
+    };
 
-    // Limpeza de emojis e substituição de espaços por underscores para manter o padrão
-    eggName = eggName.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
-    location = location.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
+    eggName = cleanText(eggName);
+    location = location ? cleanText(location) : 'Unknown';
 
-    // Se por acaso não encontrou o ovo estruturado, ignora mensagens irrelevantes
-    if (eggName === 'Unknown_Egg') return;
+    if (!eggName || eggName === '_') return;
 
     // Aplica o fuso horário (-3h)
     const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
