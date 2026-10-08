@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 
-// Configuração do cliente do Discord
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -10,69 +9,68 @@ const client = new Client({
   ]
 });
 
-// Configuração do Supabase
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Função inteligente para processar, limpar e salvar a mensagem no Supabase
 async function processMessage(msg) {
   try {
     let eggName = 'Unknown_Egg';
     let location = 'Unknown';
     let rarity = 'Common';
 
+    // Junta o conteúdo da mensagem e todos os textos dos embeds para analisar de forma global
+    let fullText = msg.content || '';
     if (msg.embeds && msg.embeds.length > 0) {
       const embed = msg.embeds[0];
-      
-      if (embed.title) eggName = embed.title;
-      else if (embed.description) eggName = embed.description.split('\n')[0];
-
-      // Procura nos campos do embed por Egg, Location e Rarity
-      if (embed.fields && embed.fields.length > 0) {
-        for (const field of embed.fields) {
-          const fieldName = field.name.toLowerCase();
-          const fieldValue = field.value;
-
-          if (fieldName.includes('egg') || fieldName.includes('ovo')) {
-            eggName = fieldValue;
-          }
-          if (fieldName.includes('location') || fieldName.includes('local')) {
-            location = fieldValue;
-          }
-          if (fieldName.includes('rarity') || fieldName.includes('raridade')) {
-            rarity = fieldValue;
-          }
-        }
+      if (embed.title) fullText += '\n' + embed.title;
+      if (embed.description) fullText += '\n' + embed.description;
+      if (embed.fields) {
+        embed.fields.forEach(f => {
+          fullText += '\n' + f.name + ': ' + f.value;
+        });
       }
-    } else if (msg.content) {
-      eggName = msg.content;
     }
 
-    // Limpeza de códigos de emojis feios e espaços
+    // Extrai o Egg com base no padrão "Egg: [Nome]"
+    const eggMatch = fullText.match(/Egg:\s*([^\n]+)/i);
+    if (eggMatch && eggMatch[1]) {
+      eggName = eggMatch[1].trim();
+    }
+
+    // Extrai a Location com base no padrão "Location: [Local]"
+    const locMatch = fullText.match(/Location:\s*([^\n]+)/i);
+    if (locMatch && locMatch[1]) {
+      location = locMatch[1].trim();
+    }
+
+    // Define a raridade com base no título ou conteúdo geral (ex: Secret Egg, Divine, etc.)
+    const lowerText = fullText.toLowerCase();
+    if (lowerText.includes('divine') || lowerText.includes('divino')) {
+      rarity = 'Divine';
+    } else if (lowerText.includes('secret') || lowerText.includes('secreto')) {
+      rarity = 'Secret';
+    } else if (lowerText.includes('mythical') || lowerText.includes('mítico')) {
+      rarity = 'Mythical';
+    } else if (lowerText.includes('legendary') || lowerText.includes('lendário')) {
+      rarity = 'Legendary';
+    }
+
+    // Limpeza de emojis e substituição de espaços por underscores para manter o padrão
     eggName = eggName.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
     location = location.replace(/<a?:\w+:\d+>/g, '').trim().replace(/\s+/g, '_');
 
-    // Deteção rigorosa de raridade
-    const fullText = (eggName + ' ' + location + ' ' + (msg.embeds[0] ? JSON.stringify(msg.embeds[0]) : '')).toLowerCase();
-    if (fullText.includes('divine') || fullText.includes('divino')) {
-      rarity = 'Divine';
-    } else if (fullText.includes('mythical') || fullText.includes('mítico')) {
-      rarity = 'Mythical';
-    } else if (fullText.includes('legendary') || fullText.includes('lendário')) {
-      rarity = 'Legendary';
-    } else if (fullText.includes('secret') || fullText.includes('secreto')) {
-      rarity = 'Secret';
-    }
+    // Se por acaso não encontrou o ovo estruturado, ignora mensagens irrelevantes
+    if (eggName === 'Unknown_Egg') return;
 
-    // Aplicação do fuso horário (-3h)
+    // Aplica o fuso horário (-3h)
     const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
 
-    // Inserção na tabela 'eggs' do Supabase
+    // Insere no Supabase
     const { error } = await supabase
       .from('eggs')
       .insert([
         { 
-          egg_name: eggName || 'Unknown', 
-          location: location || 'Unknown', 
+          egg_name: eggName, 
+          location: location, 
           rarity: rarity,
           spawned_at: correctedDate.toISOString()
         }
@@ -86,7 +84,6 @@ async function processMessage(msg) {
   }
 }
 
-// Evento executado ao ligar (Faz a varredura do histórico até às 12:00)
 client.once('ready', async () => {
   console.log(`Bot ligado como ${client.user.tag}!`);
 
@@ -136,12 +133,10 @@ client.once('ready', async () => {
   }
 });
 
-// Evento para capturar novas mensagens em tempo real
 client.on('messageCreate', async (message) => {
   if (message.channel.id === process.env.CHANNEL_ID) {
     await processMessage(message);
   }
 });
 
-// Inicia o bot
 client.login(process.env.DISCORD_TOKEN);
