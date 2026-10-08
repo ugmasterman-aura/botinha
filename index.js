@@ -29,9 +29,9 @@ async function processMessage(msg) {
       fullText = msg.content.toLowerCase();
     }
 
+    // 1. FILTROS RIGOROSOS: Ignora Lab Tracker, alertas de atividade e os banners genéricos "_Spawned!!"
     if (
-      fullText.includes('lab') || 
-      fullText.includes('experimental') || 
+      fullText.includes('lab tracker') || 
       fullText.includes('is active') || 
       fullText.includes('_spawned') || 
       fullText.includes('spawned!!') || 
@@ -44,6 +44,7 @@ async function processMessage(msg) {
     let location = 'Unknown';
     let rarity = 'Common';
 
+    // 2. EXTRAÇÃO DOS CAMPOS DO EMBED
     if (fields.length > 0) {
       for (const field of fields) {
         const fName = field.name.toLowerCase();
@@ -57,6 +58,7 @@ async function processMessage(msg) {
       }
     }
 
+    // Se não encontrou nos fields, procura na descrição
     if (!eggName && embedDesc) {
       const lines = embedDesc.split('\n');
       for (const line of lines) {
@@ -74,6 +76,7 @@ async function processMessage(msg) {
 
     if (!eggName) return;
 
+    // 3. DETEÇÃO DE RARIDADE ROBUSTA
     if (fullText.includes('divine') || fullText.includes('divino')) {
       rarity = 'Divine';
     } else if (fullText.includes('eternal') || fullText.includes('eterno') || eggName.toLowerCase().includes('eternal')) {
@@ -86,14 +89,15 @@ async function processMessage(msg) {
       rarity = 'Legendary';
     }
 
+    // 4. LIMPEZA PROFUNDA DE EMOJIS E MARKDOWN
     const cleanText = (text) => {
       return text
-        .replace(/<a?:\w+:\d+>/g, '')
-        .replace(/[*_`~<>]/g, '')
-        .replace(/egg:?/gi, '')
-        .replace(/location:?/gi, '')
+        .replace(/<a?:\w+:\d+>/g, '')      // Remove emojis do Discord
+        .replace(/[*_`~<>]/g, '')          // Remove formatações Markdown
+        .replace(/egg:?/gi, '')            // Remove palavra egg se sobrar
+        .replace(/location:?/gi, '')       // Remove palavra location se sobrar
         .trim()
-        .replace(/\s+/g, '_');
+        .replace(/\s+/g, '_');             // Substitui espaços por underscores
     };
 
     eggName = cleanText(eggName);
@@ -101,8 +105,10 @@ async function processMessage(msg) {
 
     if (!eggName || eggName === '_') return;
 
+    // Fuso horário (-3h)
     const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
 
+    // Insere no Supabase apenas dados limpos e válidos
     const { error } = await supabase
       .from('eggs')
       .insert([
@@ -123,7 +129,7 @@ async function processMessage(msg) {
 }
 
 client.once('ready', async () => {
-  console.log(`Bot ligado como ${client.user.tag}! A puxar o máximo de histórico disponível...`);
+  console.log(`Bot ligado como ${client.user.tag}! A ler histórico limpo...`);
 
   try {
     const channelId = process.env.CHANNEL_ID; 
@@ -131,11 +137,12 @@ client.once('ready', async () => {
       const channel = await client.channels.fetch(channelId);
       if (channel && channel.isTextBased()) {
         let lastId = null;
-        let fetchedCount = 0;
-        let keepFetching = true;
+        let reachedTargetTime = false;
         
-        // Puxa lotes de 100 mensagens para trás até esgotar o histórico do canal
-        while (keepFetching && fetchedCount < 1000) { // Limite de segurança de 1000 mensagens
+        const now = new Date();
+        const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+        
+        while (!reachedTargetTime) {
           const options = { limit: 100 };
           if (lastId) options.before = lastId;
 
@@ -143,18 +150,22 @@ client.once('ready', async () => {
           if (messages.size === 0) break;
 
           for (const msg of messages.values()) {
+            const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
+
             await processMessage(msg);
-            fetchedCount++;
+
+            if (correctedDate < targetDate) {
+              reachedTargetTime = true;
+              break;
+            }
           }
 
+          if (reachedTargetTime) break;
           lastId = messages.last().id;
-
-          if (messages.size < 100) {
-            keepFetching = false;
-          }
+          if (messages.size < 100) break;
         }
 
-        console.log(`Varredura concluída! Processadas ${fetchedCount} mensagens antigas.`);
+        console.log('Varredura concluída com sucesso!');
       }
     }
   } catch (err) {
