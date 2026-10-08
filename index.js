@@ -1,3 +1,70 @@
+const { Client, GatewayIntentBits } = require('discord.js');
+const { createClient } = require('@supabase/supabase-js');
+
+// Configuração do cliente do Discord
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
+
+// Configuração do Supabase (utiliza as variáveis de ambiente configuradas no Railway)
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// Função para processar e salvar a mensagem no Supabase
+async function processMessage(msg) {
+  try {
+    // Verifica se a mensagem tem embeds (geralmente onde vêm os dados dos ovos)
+    if (!msg.embeds || msg.embeds.length === 0) return;
+
+    const embed = msg.embeds[0];
+    const eggName = embed.title || embed.description || 'Unknown_Egg';
+    
+    // Tenta extrair a localização se estiver presente no embed ou descrição
+    let location = 'Unknown';
+    if (embed.fields) {
+      const locField = embed.fields.find(f => f.name.toLowerCase().includes('location') || f.name.toLowerCase().includes('local'));
+      if (locField) location = locField.value;
+    }
+
+    // Deteta a raridade com base no texto do embed
+    const textToCheck = (embed.title + ' ' + embed.description + ' ' + (embed.fields ? JSON.stringify(embed.fields) : '')).toLowerCase();
+    
+    let rarity = 'Common';
+    if (textToCheck.includes('divine') || textToCheck.includes('divino')) {
+      rarity = 'Divine';
+    } else if (textToCheck.includes('mythical') || textToCheck.includes('mítico')) {
+      rarity = 'Mythical';
+    } else if (textToCheck.includes('legendary') || textToCheck.includes('lendário')) {
+      rarity = 'Legendary';
+    }
+
+    // Aplica o ajuste de fuso horário (-3h) para a data de criação
+    const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
+
+    // Insere os dados na tabela 'eggs' do Supabase incluindo a coluna 'rarity'
+    const { error } = await supabase
+      .from('eggs')
+      .insert([
+        { 
+          egg_name: eggName.replace(/\s+/g, '_'), 
+          location: location.replace(/\s+/g, '_'), 
+          rarity: rarity,
+          spawned_at: correctedDate.toISOString()
+        }
+      ]);
+
+    if (error) {
+      console.error('Erro ao inserir no Supabase:', error.message);
+    }
+  } catch (err) {
+    console.error('Erro no processamento da mensagem:', err);
+  }
+}
+
+// Evento executado quando o bot fica online (Faz a varredura do histórico até às 12:00)
 client.once('ready', async () => {
   console.log(`Bot ligado como ${client.user.tag}!`);
 
@@ -11,12 +78,8 @@ client.once('ready', async () => {
         let lastId = null;
         let reachedTargetTime = false;
         
-        // Define o horário alvo de hoje às 12:00 (ajustado para UTC considerando o -3h, ou seja, 15:00 UTC)
-        // Como o msg.createdAt é UTC, vamos calcular o limite exato:
         const now = new Date();
         const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
-        // Adiciona 3 horas para equiparar ao UTC do Discord se necessário, 
-        // mas comparando diretamente com a data já tratada ou com margem de segurança:
         
         while (!reachedTargetTime) {
           const options = { limit: 100 };
@@ -26,13 +89,10 @@ client.once('ready', async () => {
           if (messages.size === 0) break;
 
           for (const msg of messages.values()) {
-            // Aplica a mesma correção de fuso (-3h)
             const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
 
-            // Processa a mensagem normalmente
             await processMessage(msg);
 
-            // Se a mensagem já for anterior às 12:00 de hoje, ativamos a bandeira para parar
             if (correctedDate < targetDate) {
               reachedTargetTime = true;
               break;
@@ -41,10 +101,8 @@ client.once('ready', async () => {
 
           if (reachedTargetTime) break;
 
-          // Pega o ID da última mensagem deste lote para buscar o lote anterior
           lastId = messages.last().id;
 
-          // Trava de segurança para evitar loop infinito caso o canal acabe
           if (messages.size < 100) break;
         }
 
@@ -55,3 +113,13 @@ client.once('ready', async () => {
     console.error('Erro ao ler mensagens antigas:', err);
   }
 });
+
+// Evento para capturar novas mensagens em tempo real
+client.on('messageCreate', async (message) => {
+  if (message.channel.id === process.env.CHANNEL_ID) {
+    await processMessage(message);
+  }
+});
+
+// Inicia o bot com o token configurado no Railway
+client.login(process.env.DISCORD_TOKEN);
