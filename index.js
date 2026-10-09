@@ -32,7 +32,7 @@ for (const line of text.split(/\r?\n/)) {
 const colon = line.indexOf(':');
 if (colon === -1) continue;
 
-```
+
 const rawLabel = line.slice(0, colon)
   .replace(/^[^\p{L}\p{N}]*/u, '')
   .trim()
@@ -42,7 +42,7 @@ if (labels.some(label => rawLabel === label.toLowerCase())) {
   const value = cleanText(line.slice(colon + 1));
   if (value) return value;
 }
-```
+
 
 }
 
@@ -67,7 +67,7 @@ if (match) {
 const amount = Number(match[1]);
 const unit = match[2].toLowerCase();
 
-```
+
 if (/second|sec|segundo/.test(unit)) {
   elapsedMs = amount * 1000;
 } else if (/minute|min|minuto/.test(unit)) {
@@ -75,7 +75,7 @@ if (/second|sec|segundo/.test(unit)) {
 } else if (/hour|hr|hora/.test(unit)) {
   elapsedMs = amount * 60 * 60 * 1000;
 }
-```
+
 
 }
 
@@ -88,7 +88,7 @@ if (message.channelId !== channelId) return;
 if (message.author.id === client.user.id) return;
 if (!message.embeds || message.embeds.length === 0) return;
 
-```
+
 const embed = message.embeds[0];
 
 const fieldsText = (embed.fields || [])
