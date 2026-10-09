@@ -144,7 +144,7 @@ if (error) {
 }
 
 console.log('Registro salvo com sucesso:', eggName);
-```
+
 
 } catch (error) {
 console.error('Erro ao processar mensagem:', error);
