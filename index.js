@@ -2,172 +2,163 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+intents: [
+GatewayIntentBits.Guilds,
+GatewayIntentBits.GuildMessages,
+GatewayIntentBits.MessageContent
+]
 });
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+const channelId = process.env.CHANNEL_ID;
 
-async function processMessage(msg) {
-  try {
-    let embedTitle = '';
-    let embedDesc = '';
-    let fields = [];
-
-    if (!msg.embeds || msg.embeds.length === 0) return;
-
-    const embed = msg.embeds[0];
-    embedTitle = embed.title || '';
-    embedDesc = embed.description || '';
-    if (embed.fields) fields = embed.fields;
-
-    const fullText = (embedTitle + ' ' + embedDesc + ' ' + JSON.stringify(fields)).toLowerCase();
-
-    // Filtros rigorosos para ignorar lixo, laboratório e alertas de sistema
-    if (
-      fullText.includes('lab') || 
-      fullText.includes('experimental') || 
-      fullText.includes('is active') || 
-      fullText.includes('alert') || 
-      fullText.includes('spawned!!') ||
-      fullText.includes('steal_an_alerts') ||
-      !fullText.includes('egg')
-    ) {
-      return; 
-    }
-
-    let eggName = '';
-    let location = 'Unknown';
-    let rarity = 'Common';
-
-    // Extrai o nome do ovo e local dos fields do embed
-    if (fields.length > 0) {
-      for (const field of fields) {
-        const fName = field.name.toLowerCase();
-        const fVal = field.value || '';
-
-        if (fName.includes('egg') || fName.includes('ovo')) {
-          eggName = fVal;
-        } else if (fName.includes('location') || fName.includes('local')) {
-          location = fVal;
-        }
-      }
-    }
-
-    // Se não encontrou nos fields, tenta na descrição
-    if (!eggName && embedDesc) {
-      const lines = embedDesc.split('\n');
-      for (const line of lines) {
-        if (line.toLowerCase().includes('egg:')) {
-          eggName = line.replace(/.*egg:\s*/i, '');
-        } else if (line.toLowerCase().includes('location:')) {
-          location = line.replace(/.*location:\s*/i, '');
-        }
-      }
-    }
-
-    if (!eggName && embedTitle) {
-      eggName = embedTitle;
-    }
-
-    if (!eggName) return;
-
-    // Deteção exata de raridade
-    if (fullText.includes('divine') || fullText.includes('divino')) {
-      rarity = 'Divine';
-    } else if (fullText.includes('eternal') || fullText.includes('eterno') || eggName.toLowerCase().includes('eternal')) {
-      rarity = 'Eternal';
-    } else if (fullText.includes('secret') || fullText.includes('secreto') || eggName.toLowerCase().includes('secret')) {
-      rarity = 'Secret';
-    } else if (fullText.includes('mythical') || fullText.includes('mítico')) {
-      rarity = 'Mythical';
-    } else if (fullText.includes('legendary') || fullText.includes('lendário')) {
-      rarity = 'Legendary';
-    }
-
-    // Limpeza para ficar igual ao Discord (ex: Gargoyle, Demons)
-    const cleanText = (text) => {
-      return text
-        .replace(/<a?:\w+:\d+>/g, '')
-        .replace(/[*_`~<>]/g, '')
-        .replace(/egg:?/gi, '')
-        .replace(/location:?/gi, '')
-        .trim();
-    };
-
-    eggName = cleanText(eggName);
-    location = cleanText(location);
-
-    if (!eggName || eggName.length < 2) return;
-
-    // Fuso horário (-3h)
-    const correctedDate = new Date(msg.createdAt.getTime() - (3 * 60 * 60 * 1000));
-
-    const { error } = await supabase
-      .from('eggs')
-      .insert([
-        { 
-          egg_name: eggName, 
-          location: location || 'Unknown', 
-          rarity: rarity,
-          spawned_at: correctedDate.toISOString()
-        }
-      ]);
-
-    if (error) {
-      console.error('Erro ao inserir no Supabase:', error.message);
-    }
-  } catch (err) {
-    console.error('Erro no processamento da mensagem:', err);
-  }
+if (!supabaseUrl || !supabaseKey || !process.env.DISCORD_TOKEN || !channelId) {
+throw new Error(
+'Configure DISCORD_TOKEN, CHANNEL_ID, SUPABASE_URL e SUPABASE_KEY no Railway.'
+);
 }
 
-client.once('ready', async () => {
-  console.log(`Bot ligado como ${client.user.tag}! A carregar histórico...`);
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-  try {
-    const channelId = process.env.CHANNEL_ID; 
-    if (channelId) {
-      const channel = await client.channels.fetch(channelId);
-      if (channel && channel.isTextBased()) {
-        let lastId = null;
-        let fetchedCount = 0;
-        let keepFetching = true;
-        
-        while (keepFetching && fetchedCount < 2000) {
-          const options = { limit: 100 };
-          if (lastId) options.before = lastId;
+function cleanText(text = '') {
+return text
+.replace(/<a?:\w+:\d+>/g, '')
+.replace(/[\u{1F300}-\u{1FAFF}]/gu, '')
+.replace(/<t:(\d+)(?::[tTdDfFR])?>/g, '$1')
+.replace(/[*_`~]/g, '')
+.trim();
+}
 
-          const messages = await channel.messages.fetch(options);
-          if (messages.size === 0) break;
+function extractValue(text, label) {
+const regex = new RegExp(
+`(?:^|\\n)\\s*(?:[^\\S\\n]*)(?:[^\\w\\n]*\\s*)?${label}\\s*:\\s*([^\\n]+)`,
+'im'
+);
 
-          for (const msg of messages.values()) {
-            await processMessage(msg);
-            fetchedCount++;
-          }
+const match = text.match(regex);
+return match ? cleanText(match[1]) : '';
+}
 
-          lastId = messages.last().id;
+function detectRarity(text) {
+if (/\bdivine\b|\bdivino\b|\bdivina\b/i.test(text)) return 'Divine';
+if (/\beternal\b|\beterno\b|\beterna\b/i.test(text)) return 'Eternal';
+if (/\bsecret\b|\bsecreto\b|\bsecreta\b/i.test(text)) return 'Secret';
+return null;
+}
 
-          if (messages.size < 100) {
-            keepFetching = false;
-          }
-        }
+function estimateSpawnTime(message, fullText) {
+// A idade relativa do embed é a melhor pista disponível
+// para estimar quando o pet apareceu.
+const ageMatch = fullText.match(
+/(?:spawned\s*:\s*)?(?:há|ha|about|around)?\s*(\d+)\s*(seconds?|secs?|segundos?|minutes?|mins?|minutos?|hours?|hrs?|horas?)\b/i
+);
 
-        console.log(`Histórico carregado! Total processado: ${fetchedCount}`);
-      }
-    }
-  } catch (err) {
-    console.error('Erro ao ler mensagens antigas:', err);
-  }
+let elapsedMs = 0;
+
+if (ageMatch) {
+const amount = Number(ageMatch[1]);
+const unit = ageMatch[2].toLowerCase();
+
+```
+if (/second|sec|segundo/.test(unit)) {
+  elapsedMs = amount * 1000;
+} else if (/minute|min|minuto/.test(unit)) {
+  elapsedMs = amount * 60 * 1000;
+} else if (/hour|hr|hora/.test(unit)) {
+  elapsedMs = amount * 60 * 60 * 1000;
+}
+```
+
+}
+
+// Mantém a data em UTC. Não subtraia três horas manualmente.
+return new Date(message.createdTimestamp - elapsedMs).toISOString();
+}
+
+async function processMessage(message) {
+try {
+if (message.channelId !== channelId) return;
+if (!message.embeds.length) return;
+
+```
+const embed = message.embeds[0];
+
+// Alguns notificadores colocam os dados na descrição;
+// outros usam campos separados.
+const fieldText = (embed.fields || [])
+  .map(field => `${field.name}: ${field.value}`)
+  .join('\n');
+
+const fullText = [
+  embed.title || '',
+  embed.description || '',
+  fieldText
+].join('\n');
+
+const rarity = detectRarity(fullText);
+
+// Só registrar as três raridades desejadas.
+if (!rarity) {
+  console.log('Ignorada: raridade não identificada.');
+  return;
+}
+
+const eggName = extractValue(fullText, 'Egg|Ovo');
+const location = extractValue(fullText, 'Location|Local|Area|Área|Biome|Bioma');
+
+if (!eggName || !location) {
+  console.log('Notificação ignorada: dados incompletos.', {
+    title: embed.title,
+    eggName,
+    location,
+    description: embed.description
+  });
+  return;
+}
+
+const spawnedAt = estimateSpawnTime(message, fullText);
+
+const record = {
+  egg_name: eggName,
+  location,
+  spawned_at: spawnedAt,
+  rarity
+};
+
+console.log('Notificação identificada:', record);
+
+const { data, error } = await supabase
+  .from('eggs')
+  .insert(record)
+  .select();
+
+if (error) {
+  console.error('Erro ao inserir no Supabase:', error);
+  return;
+}
+
+console.log('Registro salvo com sucesso:', data);
+```
+
+} catch (error) {
+console.error('Erro ao processar notificação:', error);
+}
+}
+
+client.once('clientReady', () => {
+console.log(`Bot conectado como ${client.user.tag}`);
+console.log(`Monitorando o canal ${channelId}`);
 });
 
-client.on('messageCreate', async (message) => {
-  if (message.channel.id === process.env.CHANNEL_ID) {
-    await processMessage(message);
-  }
+client.on('messageCreate', async message => {
+if (message.channelId !== channelId) return;
+
+// O bot também consegue ler embeds enviados por outros bots,
+// desde que tenha acesso ao canal e as permissões necessárias.
+if (message.author.id === client.user.id) return;
+
+await processMessage(message);
 });
 
 client.login(process.env.DISCORD_TOKEN);
