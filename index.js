@@ -22,7 +22,13 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 function cleanText(value) {
   return String(value || '')
-    .replace(/<a?:\w+:\d+>/g, '')
+    // Remove emojis personalizados do Discord e seus IDs
+    .replace(/<a?:[a-zA-Z0-9_]+:\d+>/g, '')
+    // Remove qualquer resíduo de emoji no formato :nome:
+    .replace(/:\w+:/g, '')
+    // Remove IDs numéricos que sobraram antes do texto
+    .replace(/^\s*\d+>\s*/g, '')
+    // Remove a formatação Markdown
     .replace(/[*_`~]/g, '')
     .trim();
 }
