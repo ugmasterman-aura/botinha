@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 
+// Configuração do Discord
 const client = new Client({
 intents: [
 GatewayIntentBits.Guilds,
@@ -9,56 +10,80 @@ GatewayIntentBits.MessageContent
 ]
 });
 
+// Configuração do Supabase
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const channelId = process.env.CHANNEL_ID;
 
-if (!supabaseUrl || !supabaseKey || !process.env.DISCORD_TOKEN || !channelId) {
+if (!supabaseUrl || !supabaseKey || !channelId || !process.env.DISCORD_TOKEN) {
 throw new Error(
-'Configure DISCORD_TOKEN, CHANNEL_ID, SUPABASE_URL e SUPABASE_KEY no Railway.'
+'Faltam variáveis: DISCORD_TOKEN, CHANNEL_ID, SUPABASE_URL ou SUPABASE_KEY.'
 );
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-function cleanText(text = '') {
-return text
+// Remove formatação e emojis sem alterar os dados importantes
+function cleanText(value) {
+return String(value || '')
 .replace(/<a?:\w+:\d+>/g, '')
-.replace(/[\u{1F300}-\u{1FAFF}]/gu, '')
-.replace(/<t:(\d+)(?::[tTdDfFR])?>/g, '$1')
 .replace(/[*_`~]/g, '')
 .trim();
 }
 
-function extractValue(text, label) {
-const regex = new RegExp(
-`(?:^|\\n)\\s*(?:[^\\S\\n]*)(?:[^\\w\\n]*\\s*)?${label}\\s*:\\s*([^\\n]+)`,
-'im'
+// Extrai um valor de uma linha, como Egg: Mosasaurus
+function extractField(text, labels) {
+const lines = text.split(/\r?\n/);
+
+for (const line of lines) {
+for (const label of labels) {
+const pattern = new RegExp(
+'^\s*[^\w\n]*\s*' + label + '\s*:\s*(.*?)\s*$',
+'i'
 );
 
-const match = text.match(regex);
-return match ? cleanText(match[1]) : '';
+```
+  const match = line.match(pattern);
+
+  if (match && match[1]) {
+    return cleanText(match[1]);
+  }
+}
+```
+
 }
 
+return '';
+}
+
+// Identifica somente as raridades que queremos monitorar
 function detectRarity(text) {
-if (/\bdivine\b|\bdivino\b|\bdivina\b/i.test(text)) return 'Divine';
-if (/\beternal\b|\beterno\b|\beterna\b/i.test(text)) return 'Eternal';
-if (/\bsecret\b|\bsecreto\b|\bsecreta\b/i.test(text)) return 'Secret';
+if (/\bdivine\b|\bdivino\b|\bdivina\b/i.test(text)) {
+return 'Divine';
+}
+
+if (/\beternal\b|\beterno\b|\beterna\b/i.test(text)) {
+return 'Eternal';
+}
+
+if (/\bsecret\b|\bsecreto\b|\bsecreta\b/i.test(text)) {
+return 'Secret';
+}
+
 return null;
 }
 
-function estimateSpawnTime(message, fullText) {
-// A idade relativa do embed é a melhor pista disponível
-// para estimar quando o pet apareceu.
-const ageMatch = fullText.match(
+// Estima o horário do spawn usando a idade indicada no embed
+function getSpawnTime(message, text) {
+const match = text.match(
 /(?:spawned\s*:\s*)?(?:há|ha|about|around)?\s*(\d+)\s*(seconds?|secs?|segundos?|minutes?|mins?|minutos?|hours?|hrs?|horas?)\b/i
 );
 
 let elapsedMs = 0;
 
-if (ageMatch) {
-const amount = Number(ageMatch[1]);
-const unit = ageMatch[2].toLowerCase();
+if (match) {
+const amount = Number(match[1]);
+const unit = match[2].toLowerCase();
 
 ```
 if (/second|sec|segundo/.test(unit)) {
@@ -72,93 +97,94 @@ if (/second|sec|segundo/.test(unit)) {
 
 }
 
-// Mantém a data em UTC. Não subtraia três horas manualmente.
+// Guarda a data em UTC, sem subtrair horas manualmente
 return new Date(message.createdTimestamp - elapsedMs).toISOString();
 }
 
+// Processa uma notificação do Discord
 async function processMessage(message) {
 try {
 if (message.channelId !== channelId) return;
-if (!message.embeds.length) return;
+if (message.author.id === client.user.id) return;
+if (!message.embeds || message.embeds.length === 0) return;
 
 ```
 const embed = message.embeds[0];
 
-// Alguns notificadores colocam os dados na descrição;
-// outros usam campos separados.
-const fieldText = (embed.fields || [])
-  .map(field => `${field.name}: ${field.value}`)
+const fieldsText = (embed.fields || [])
+  .map(function (field) {
+    return String(field.name || '') + ': ' + String(field.value || '');
+  })
   .join('\n');
 
 const fullText = [
   embed.title || '',
   embed.description || '',
-  fieldText
+  fieldsText
 ].join('\n');
 
 const rarity = detectRarity(fullText);
 
-// Só registrar as três raridades desejadas.
 if (!rarity) {
-  console.log('Ignorada: raridade não identificada.');
+  console.log('Notificação ignorada: não é Secret, Eternal ou Divine.');
   return;
 }
 
-const eggName = extractValue(fullText, 'Egg|Ovo');
-const location = extractValue(fullText, 'Location|Local|Area|Área|Biome|Bioma');
+const eggName = extractField(fullText, ['Egg', 'Ovo']);
+const location = extractField(
+  fullText,
+  ['Location', 'Local', 'Area', 'Área', 'Biome', 'Bioma']
+);
 
 if (!eggName || !location) {
-  console.log('Notificação ignorada: dados incompletos.', {
-    title: embed.title,
-    eggName,
-    location,
-    description: embed.description
-  });
+  console.log('Notificação incompleta. Verifique o formato do embed.');
+  console.log('Título:', embed.title || '(sem título)');
+  console.log('Descrição:', embed.description || '(sem descrição)');
+  console.log('Campos:', fieldsText || '(sem campos)');
   return;
 }
-
-const spawnedAt = estimateSpawnTime(message, fullText);
 
 const record = {
   egg_name: eggName,
-  location,
-  spawned_at: spawnedAt,
-  rarity
+  location: location,
+  spawned_at: getSpawnTime(message, fullText),
+  rarity: rarity
 };
 
-console.log('Notificação identificada:', record);
+console.log('Enviando registro:', record);
 
-const { data, error } = await supabase
+const result = await supabase
   .from('eggs')
-  .insert(record)
-  .select();
+  .insert([record]);
 
-if (error) {
-  console.error('Erro ao inserir no Supabase:', error);
+if (result.error) {
+  console.error('Erro ao salvar no Supabase:', result.error.message);
+  console.error('Código:', result.error.code);
   return;
 }
 
-console.log('Registro salvo com sucesso:', data);
+console.log('Registro salvo com sucesso:', eggName);
 ```
 
 } catch (error) {
-console.error('Erro ao processar notificação:', error);
+console.error('Erro ao processar mensagem:', error);
 }
 }
 
-client.once('clientReady', () => {
-console.log(`Bot conectado como ${client.user.tag}`);
-console.log(`Monitorando o canal ${channelId}`);
+// Inicialização do bot
+client.once('clientReady', function () {
+console.log('Bot conectado como ' + client.user.tag);
+console.log('Monitorando o canal ' + channelId);
 });
 
-client.on('messageCreate', async message => {
+// Recebe novas mensagens em tempo real
+client.on('messageCreate', async function (message) {
 if (message.channelId !== channelId) return;
-
-// O bot também consegue ler embeds enviados por outros bots,
-// desde que tenha acesso ao canal e as permissões necessárias.
-if (message.author.id === client.user.id) return;
 
 await processMessage(message);
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// Conecta ao Discord
+client.login(process.env.DISCORD_TOKEN).catch(function (error) {
+console.error('Erro ao conectar ao Discord:', error);
+});
